@@ -4,55 +4,93 @@ set -e
 # ------------------------------
 # Install OpenJDK 21
 # ------------------------------
-echo "[*] Downloading OpenJDK 21..."
-wget -q https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.4+7/OpenJDK21U-jdk_x64_linux_hotspot_21.0.4_7.tar.gz -O jdk21.tar.gz
+JDK_URL="https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.4+7/OpenJDK21U-jdk_x64_linux_hotspot_21.0.4_7.tar.gz"
+JDK_ARCHIVE="jdk21.tar.gz"
+JAVA_DIR=~/java
 
-echo "[*] Extracting JDK..."
-mkdir -p ~/java
-tar -xvzf jdk21.tar.gz -C ~/java
-rm jdk21.tar.gz
+if [ ! -d "$JAVA_DIR" ]; then
+    echo "[*] Downloading OpenJDK 21..."
+    wget -q "$JDK_URL" -O "$JDK_ARCHIVE"
+    mkdir -p "$JAVA_DIR"
+    tar -xvzf "$JDK_ARCHIVE" -C "$JAVA_DIR"
+    rm "$JDK_ARCHIVE"
+else
+    echo "[*] Java already installed, skipping..."
+fi
 
-# Set JAVA_HOME and PATH
-JAVA_HOME=$(find ~/java -maxdepth 1 -type d -name "jdk-21.*" | head -n 1)
+JAVA_HOME=$(find "$JAVA_DIR" -maxdepth 1 -type d -name "jdk-21.*" | head -n 1)
 PATH="$JAVA_HOME/bin:$PATH"
 
-echo "[*] Java installed at $JAVA_HOME"
 "$JAVA_HOME/bin/java" -version
 
 # ------------------------------
 # Download Paper server
 # ------------------------------
-echo "[*] Downloading Paper server..."
-wget -q https://fill-data.papermc.io/v1/objects/ab9bb1afc3cea6978a0c03ce8448aa654fe8a9c4dddf341e7cbda1b0edaa73f5/paper-1.21-130.jar -O paper.jar
+PAPER_JAR="paper.jar"
+if [ ! -f "$PAPER_JAR" ]; then
+    echo "[*] Downloading Paper server..."
+    wget -q https://fill-data.papermc.io/v1/objects/ab9bb1afc3cea6978a0c03ce8448aa654fe8a9c4dddf341e7cbda1b0edaa73f5/paper-1.21-130.jar -O "$PAPER_JAR"
+else
+    echo "[*] Paper server already exists, skipping..."
+fi
 
-# Run once to generate eula.txt
-echo "[*] Running Paper to generate eula.txt..."
-"$JAVA_HOME/bin/java" -Xmx2G -Xms1G -jar paper.jar nogui || true
+# Generate eula.txt if missing
+if [ ! -f eula.txt ]; then
+    echo "[*] Running Paper to generate eula.txt..."
+    "$JAVA_HOME/bin/java" -Xmx2G -Xms1G -jar "$PAPER_JAR" nogui || true
+fi
 
 # Accept EULA
-echo "[*] Accepting Minecraft EULA..."
-sed -i 's/eula=false/eula=true/' eula.txt
+if grep -q "eula=false" eula.txt 2>/dev/null; then
+    echo "[*] Accepting Minecraft EULA..."
+    sed -i 's/eula=false/eula=true/' eula.txt
+fi
 
 # ------------------------------
 # Install Plugins
 # ------------------------------
 mkdir -p plugins
-echo "[*] Downloading plugins..."
-wget -q https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot -O plugins/Geyser-Spigot.jar
-wget -q https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot -O plugins/floodgate-spigot.jar
-wget -q https://github.com/ViaVersion/ViaVersion/releases/download/5.4.2/ViaVersion-5.4.2.jar -O plugins/ViaVersion-5.4.2.jar
-wget -q https://github.com/ViaVersion/ViaBackwards/releases/download/5.4.2/ViaBackwards-5.4.2.jar -O plugins/ViaBackwards-5.4.2.jar
+
+download_plugin() {
+    local url="$1"
+    local file="$2"
+    if [ ! -f "plugins/$file" ]; then
+        echo "[*] Downloading $file..."
+        wget -q "$url" -O "plugins/$file"
+    else
+        echo "[*] $file already exists, skipping..."
+    fi
+}
+
+download_plugin "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot" "Geyser-Spigot.jar"
+download_plugin "https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot" "floodgate-spigot.jar"
+download_plugin "https://github.com/ViaVersion/ViaVersion/releases/download/5.4.2/ViaVersion-5.4.2.jar" "ViaVersion-5.4.2.jar"
+download_plugin "https://github.com/ViaVersion/ViaBackwards/releases/download/5.4.2/ViaBackwards-5.4.2.jar" "ViaBackwards-5.4.2.jar"
 
 # ------------------------------
 # Download Playit.gg agent
 # ------------------------------
-echo "[*] Downloading Playit.gg agent..."
-wget -q https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-amd64 -O playit
-chmod +x playit
+if [ ! -f playit ]; then
+    echo "[*] Downloading Playit.gg agent..."
+    wget -q https://github.com/playit-cloud/playit-agent/releases/download/v0.16.2/playit-linux-amd64 -O playit
+    chmod +x playit
+else
+    echo "[*] Playit agent already exists, skipping..."
+fi
 
 # ------------------------------
-# Run Playit and Paper server together
+# Run Playit and Paper server
 # ------------------------------
 echo "[*] Starting Playit.gg tunnel and PaperMC server..."
-./playit &   # run Playit in background
-"$JAVA_HOME/bin/java" -Xmx2G -Xms1G -jar paper.jar nogui
+
+# Kill old playit process if running
+if pgrep -x "playit" >/dev/null; then
+    echo "[*] Stopping existing Playit process..."
+    pkill -x playit
+fi
+
+# Start Playit in background
+./playit &
+
+# Start Paper server in foreground
+"$JAVA_HOME/bin/java" -Xmx6G -Xms1G -jar "$PAPER_JAR" nogui
